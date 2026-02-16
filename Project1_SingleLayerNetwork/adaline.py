@@ -204,4 +204,14 @@ class Adaline():
             
         return self.loss_history, self.accuracy_history
             
-        
+class Perceptron(Adaline):
+    """
+    Perceptron classifier: same structure as Adaline, but activation is a step/sign function
+    """
+    def activation(self, net_in):
+        """
+        Step Activation:
+        +1 if net_in >0
+        -1 otherwise
+        """
+        return np.where(net_in >= 0, 1, -1)
