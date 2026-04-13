@@ -1,7 +1,7 @@
 '''filter_ops.py
 Implements the convolution and max pooling operations.
 Applied to images and other data represented as an ndarray.
-YOUR NAMES HERE
+Duilio Lucio, Vivian Hu
 CS343: Neural Networks
 Project 3: Convolutional neural networks
 '''
@@ -114,7 +114,32 @@ def conv2(img, kers, verbose=True):
     if ker_x != ker_y:
         print('Kernels must be square!')
         return
+    
+    # Padding and initializing output
+    pad = ker_y // 2
+    filteredImg = np.zeros((n_kers, n_chans, img_y, img_x))
+    
+    # Pad input image, only pad height & weight (axis 1, axis 2), channel axis(axis 0) remains unpadded
+    padded_img = np.pad(img, ((0, 0), (pad, pad), (pad, pad)), mode = 'constant')
 
+    # Convolution
+    for k in range(n_kers):
+        # Flip kernel for convolution logic
+        curr_ker = kers[k, ::-1, ::-1]
+        for y in range(img_y):
+            for x in range(img_x):
+                # Slice window across all channels (:), window shape: (n_chans, ker_y, ker_x)
+                window = padded_img[:, y : y + ker_y, x : x + ker_x]
+                
+                # elem. wise multiplcation (broadcasting), (n_chans, ker_y, ker_x) * (ker_y, ker_x) -> (n_chans, ker_y, ker_x)
+                conv_sum = np.sum(window * curr_ker, axis=(1, 2), keepdims=True)
+                
+                # Remove "singleton" dimensions, will now fit into (n_chans, ) slot in output
+                filteredImg[k, :, y, x] = conv_sum.squeeze()
+        if verbose:
+            print(f'Finished filtering with kernal {k+1}/{n_kers}')
+    return filteredImg
+                
 
 def conv2nn(imgs, kers, bias, verbose=True):
     '''General 2D convolution operation suitable for a convolutional layer of a neural network.
@@ -165,6 +190,29 @@ def conv2nn(imgs, kers, bias, verbose=True):
         print('Number of kernel channels doesnt match input num channels!')
         return
 
+    # output array
+    output = np.zeros((batch_sz, n_kers, img_y, img_x))
+    
+    # Padding for 4D array : (Batch, Channel, Height, Width)
+    pad = ker_y // 2
+    padded_img = np.pad(imgs, ((0, 0), (0,0), (pad, pad), (pad, pad)), mode = 'constant')
+    
+    # Convolution
+    for k in range(n_kers):
+        curr_ker = kers[k, :, ::-1, ::-1] # flip kernal
+        for y in range(img_y):
+            for x in range(img_x):
+                # slice window across all images in batch and ALL channels
+                window = padded_img[:, :, y : y + ker_y, x : x + ker_x]
+                # element wise mult & sum across, collapse dims for 1 val
+                conv_sum = np.sum(window * curr_ker, axis=(1, 2, 3))
+                # assign every image in batch its own map val.
+                output[:, k, y, x] = conv_sum
+    # Add bias, reshape bias across Batch, Y, and X
+    output += bias[np.newaxis, :, np.newaxis, np.newaxis]
+    return output 
+    
+
 
 def get_pooling_out_shape(img_dim, pool_size, strides):
     '''Computes the size of the output of a max pooling operation along one spatial dimension.
@@ -211,6 +259,24 @@ def max_pool(inputs, pool_size=2, strides=1, verbose=True):
     - Overall, this should be a simpler implementation than `conv2_gray`
     '''
     img_y, img_x = inputs.shape
+    # Calculating output dims. , formula : out = ((in - pool_size) // strides) + 1 
+    out_y = (img_y - pool_size) // strides + 1
+    out_x = (img_x - pool_size) // strides + 1
+    
+    # Initialize smaller output array
+    outputs = np.zeros((out_y, out_x))
+    
+    # Perform max pooling, iterate over the output coordinates (i, j)
+    for i in range(out_y):
+        for j in range(out_x):
+            # Starting position in input image, "stride" takes place
+            start_y = i * strides
+            start_x = j * strides
+            # Slice window from input, shape:(pool_size, pool_size)
+            window = inputs[start_y : start_y + pool_size, start_x : start_x + pool_size]
+            # take max val. in current window and assign to output
+            outputs[i, j] = np.max(window)
+    return outputs
 
 
 def max_poolnn(inputs, pool_size=2, strides=1, verbose=True):
@@ -241,3 +307,25 @@ def max_poolnn(inputs, pool_size=2, strides=1, verbose=True):
     - If you added additional nested loops, be careful when you reset your input image indices
     '''
     mini_batch_sz, n_chans, img_y, img_x = inputs.shape
+    # Calculate output spatial diemnsions
+    out_y = (img_y - pool_size) // strides + 1
+    out_x = (img_x - pool_size) // strides + 1
+    
+    # intialize output as a 4D tensor
+    outputs = np.zeros((mini_batch_sz, n_chans, out_y, out_x))
+    
+    # Spatial loops
+    for i in range(out_y):
+        for j in range(out_x):
+            # calculating input coordinates based on stride
+            start_y = i * strides 
+            start_x = j * strides
+            end_y = start_y + pool_size
+            end_x = start_x + pool_size
+            # Slicing across ALL batches & ALL channels
+            window = inputs[:, :, start_y:end_y, start_x:end_x]
+            # computing max over last 2 axes(Height and Width), result is (mini_batch_sz, n_chans)
+            m_pool = np.max(window, axis=(2, 3))
+            # results = ouput tensor
+            outputs[:, :, i, j] = m_pool
+    return outputs
