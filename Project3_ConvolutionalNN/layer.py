@@ -187,7 +187,7 @@ class Layer:
         # extract probs. assigned to correct class
         correct_class_probs = self.net_act[np.arange(batch_sz), y]
         # compute loss 
-        log_likelihood = np.log(correct_class_probs + 1e-10) # iny epsilon (1e-10) to the log to prevent log(0) errors.
+        log_likelihood = np.log(correct_class_probs) 
         loss = -np.sum(log_likelihood) / batch_sz
         return loss
 
@@ -721,9 +721,10 @@ class Dense(Layer):
         if r_seed is not None:
             rng = np.random.default_rng(r_seed + number)
             self.wts = rng.normal(loc=0, scale=wt_scale, size=(n_units_prev_layer, units))
+            self.b = np.zeros(units)
         else:
             self.wts = np.random.normal(loc=0, scale=wt_scale, size=(n_units_prev_layer, units))
-        self.b = np.zeros(units)
+            self.b = np.zeros(units)
 
     def compute_net_in(self):
         '''Computes `self.net_in` via Dense dot product of inputs (like in ADALINE/MLP).

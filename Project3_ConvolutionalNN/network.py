@@ -134,7 +134,18 @@ class Network:
         2. Compute and get the weight regularization via `self.wt_reg_reduce()` (implement this next)
         4. Return the sum of the loss and the regularization term.
         '''
-        pass
+        # Chain layers together
+        current_data = inputs # raw input images
+        # passes data through every layer in self.layers
+        for layer in self.layers:
+            current_data = layer.forward(current_data)
+        # classification loss from LAST layer
+        data_loss = self.layers[-1].loss(y) # assume last layer is dense Softmax activation layer
+        # computes weight regularization ("complexity penalty")
+        reg_loss = self.wt_reg_reduce() # ensures weights are not large
+        
+        # combined loss
+        return data_loss + reg_loss
 
     def wt_reg_reduce(self):
         '''Computes the loss weight regularization for all network layers that have weights
@@ -148,7 +159,13 @@ class Network:
         The network regularization `wt_reg` is simply the sum of all the regularization terms
         for each individual layer.
         '''
-        pass
+        total_reg = 0
+        for i in self.wt_layer_inds:
+            layer = self.layers[i]
+            # Checks if layer has wts & reg
+            if layer.wts is not None and layer.reg is not None:
+                total_reg += 0.5 * layer.reg * np.sum(layer.wts**2) # L2 reg formula: 0.5 * reg * sum(wts^2)
+        return total_reg
 
     def backward(self, y):
         '''Initiates the backward pass through all the layers of the network.
@@ -319,3 +336,19 @@ class ConvNet4(Network):
         super().__init__(reg, verbose)
 
         n_chans, h, w = input_shape
+        # Appending layers in exact order
+        self.layers.append(layer.Conv2D(0, 'conv', n_kers[0], ker_sz[0], n_chans, 
+                                        activation='relu', wt_scale=wt_scale, reg=reg, r_seed=r_seed, verbose=verbose))
+        self.layers.append(layer.MaxPool2D(1, 'pool', pool_size=pooling_sizes[0], 
+                                           strides=pooling_strides[0], verbose=verbose))
+        self.layers.append(layer.Flatten(2, 'flatten', verbose))
+        # Dense Hidden, compute n_units_prev_layer
+        self.layers.append(layer.Dense(3, 'dense_hidden', units=dense_interior_units[0], n_units_prev_layer=n_kers[0]*(h // pooling_strides[0])*(w // pooling_strides[0]), 
+                                       activation='relu', wt_scale=wt_scale, reg=reg, r_seed=r_seed, verbose=verbose))
+        # Dense Output
+        self.layers.append(layer.Dense(4, 'output', units=n_classes, n_units_prev_layer=dense_interior_units[0],
+                                       wt_scale=wt_scale, activation='softmax', reg=reg, r_seed=r_seed, verbose=verbose))
+        
+        # Weight regularization logic
+        self.wt_layer_inds = [0, 3, 4]
+        
