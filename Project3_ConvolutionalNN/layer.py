@@ -272,6 +272,15 @@ class Layer:
         # with respect to the last layer's netAct function (softmax)
         if d_upstream is None:
             d_upstream = self.compute_dlast_net_act()
+            
+        # compute d_net_in (gradient through activation function)
+        d_net_in = self.backward_netAct_to_netIn(d_upstream, y)
+        # compute gradients, call specific method for layer type
+        dprev_net_act, d_wts, d_b = self.backward_netIn_to_prevLayer_netAct(d_net_in)
+        # save
+        self.d_wts = d_wts
+        self.d_b = d_b
+        return dprev_net_act, d_wts, d_b
 
     def compute_dlast_net_act(self):
         '''Computes the gradient of the loss function with respect to the last layer's netAct.
@@ -315,11 +324,16 @@ class Layer:
 
         '''
         if self.activation == 'relu':
-            pass
+            # 1 if input > 0, else 0. Elem-wise mult. d_upstream by mask
+            d_net_in = d_upstream.copy()
+            d_net_in[self.net_in <= 0] = 0
         elif self.activation == 'linear':
-            pass
+            # gradient is passed without any changes, linear deriv: f(x) = x -> f'(x) = 1
+            d_net_in = d_upstream.copy()
         elif self.activation == 'softmax':
-            pass
+            # Combined gradient of Softmax + Cross-Entropy is (Probs - GroundTruth) / N
+            y_one_hot = self.one_hot(y, self.net_act.shape[1])
+            d_net_in = (self.net_act - y_one_hot) / y.shape[0]
         else:
             raise ValueError('Error! Unknown activation function ', self.activation)
         return d_net_in
@@ -615,6 +629,28 @@ class MaxPool2D(Layer):
         '''
         mini_batch_sz, n_chans, img_y, img_x = self.input.shape
         mini_batch_sz_d, n_chans_d, out_y, out_x = d_upstream.shape
+        # initialize dprev_net_act with zeros
+        dprev_net_act = np.zeros_like(self.input)
+        # looping through outer spatial dimensions
+        for i in range(out_y):
+            for j in range(out_x):
+                # compute window boundaries in inputs
+                start_y, start_x = i * self.strides, j * self.strides
+                end_y, end_x = start_y + self.pool_size, start_x + self.pool_size
+                # slice window across all batches and channels
+                window = self.input[:, :, start_y:end_y, start_x:end_x]
+                # reshape window to (batch, chan, pool_size*pool_size) in order to find max index
+                reshaped_window = window.reshape(mini_batch_sz, n_chans, -1) # find index within window for all batch/channel at once
+                max_inds = np.argmax(reshaped_window, axis=2)
+                # get (y, x) inside window 
+                for b in range(mini_batch_sz):
+                    for c in range(n_chans):
+                        # relative coordinates in pool window
+                        y_off, x_off = self.ind2sub(max_inds[b, c], (self.pool_size, self.pool_size))
+                        # accumulate upstream gradient at position that was "max"
+                        dprev_net_act[b, c, start_y + y_off, start_x + x_off] += d_upstream[b, c, i, j]
+                        
+        return dprev_net_act, None, None
 
     def ind2sub(self, linear_ind, sz):
         '''Converts a linear index `linear_ind` to a subscript index based on the window size `sz`
@@ -666,7 +702,9 @@ class Flatten(Layer):
 
         HINT: You have access to the input from forward pass via self.input...
         '''
-        pass
+        # reshape 1D upstream gradient back to 4D input shape
+        dprev_net_act = d_upstream.reshape(self.input.shape) # shape: (batch_sz, n_chans, img_y, img_x)
+        return dprev_net_act, None, None
 
 
 class Dense(Layer):
@@ -756,7 +794,16 @@ class Dense(Layer):
             Shape errors will frequently show up at this backprop stage, one layer down.
         -Regularize your wts
         '''
-        pass
+        # Shape: (n_prev_layer_units, batch_sz) @ (batch_sz, units) -> (n_prev_layer_units, units)
+        d_wts = self.input.T @ d_upstream
+        # sum of d_upstream across mini-batch
+        d_b = np.sum(d_upstream, axis=0)
+        # (batch_sz, units) @ (units, n_prev_layer_units) -> (batch_sz, n_prev_layer_units)
+        dprev_net_act = d_upstream @ self.wts.T
+        # regularize wts
+        if self.reg is not None:
+            d_wts += self.reg * self.wts
+        return dprev_net_act, d_wts, d_b
 
 
 class Dropout(Layer):
